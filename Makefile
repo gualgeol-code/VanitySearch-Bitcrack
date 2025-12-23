@@ -19,9 +19,31 @@ OBJET = $(addprefix $(OBJDIR)/, \
         hash/ripemd160_sse.o hash/sha256_sse.o \
         GPU/GPUEngine.o Bech32.o Wildcard.o)
 
-CXX        = g++-9
+# Auto-detect available compilers
+# Try to find g++ with version 11, 10, 9, or default g++
+GPP_DEFAULT := $(shell which g++ 2>/dev/null)
+GPP_11 := $(shell which g++-11 2>/dev/null)
+GPP_10 := $(shell which g++-10 2>/dev/null)
+GPP_9 := $(shell which g++-9 2>/dev/null)
+
+# Select compiler (prefer newer versions)
+ifneq ($(GPP_11),)
+    CXX        = g++-11
+    CXXCUDA    = /usr/bin/g++-11
+else ifneq ($(GPP_10),)
+    CXX        = g++-10
+    CXXCUDA    = /usr/bin/g++-10
+else ifneq ($(GPP_9),)
+    CXX        = g++-9
+    CXXCUDA    = /usr/bin/g++-9
+else ifneq ($(GPP_DEFAULT),)
+    CXX        = g++
+    CXXCUDA    = /usr/bin/g++
+else
+    $(error No suitable g++ compiler found. Please install g++)
+endif
+
 CUDA       = /usr/local/cuda
-CXXCUDA    = /usr/bin/g++-9
 NVCC       = $(CUDA)/bin/nvcc
 
 # Auto-detect CUDA version
@@ -31,6 +53,8 @@ CUDA_MINOR := $(shell echo $(CUDA_VERSION) | cut -d. -f2)
 
 # Debug info
 $(info Detected CUDA version: $(CUDA_VERSION))
+$(info Using C++ compiler: $(CXX))
+$(info Using CUDA host compiler: $(CXXCUDA))
 
 # Base GENCODE flags common to most CUDA versions
 GENCODE_BASE := -gencode=arch=compute_60,code=sm_60 \
@@ -38,16 +62,20 @@ GENCODE_BASE := -gencode=arch=compute_60,code=sm_60 \
                 -gencode=arch=compute_75,code=sm_75
 
 # Conditional GENCODE flags based on CUDA version
-# CUDA 11.0: support up to compute_80 (Volta)
-# CUDA 11.1-11.7: support up to compute_86 (Ampere)
-# CUDA 11.8+: support up to compute_89 (Ada Lovelace)
-
 # Calculate CUDA version as integer (major * 100 + minor)
 CUDA_VERSION_INT := $(shell expr $(CUDA_MAJOR) \* 100 + $(CUDA_MINOR))
 
-ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1180), 1)
-    # CUDA 11.8+ - full support up to compute_89
-    $(info CUDA 11.8+ detected - full GPU architecture support)
+ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1200), 1)
+    # CUDA 12.x - full support
+    $(info CUDA 12.x detected - full GPU architecture support)
+    GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80 \
+                     -gencode=arch=compute_86,code=sm_86 \
+                     -gencode=arch=compute_89,code=sm_89 \
+                     -gencode=arch=compute_90,code=sm_90 \
+                     -gencode=arch=compute_90,code=compute_90
+else ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1180), 1)
+    # CUDA 11.8+ - support up to compute_89
+    $(info CUDA 11.8+ detected - including Ada Lovelace (sm_89) support)
     GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80 \
                      -gencode=arch=compute_86,code=sm_86 \
                      -gencode=arch=compute_89,code=sm_89 \
@@ -60,34 +88,30 @@ else ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1110), 1)
 else ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1100), 1)
     # CUDA 11.0 - support up to compute_80 ONLY
     $(warning CUDA 11.0 detected - limited to architectures up to Volta (sm_80))
-    $(warning compute_86 (Ampere) and compute_89 (Ada) are NOT supported)
     GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80
 else
     # CUDA 10.x or older
     $(warning CUDA $(CUDA_VERSION) detected - only basic GPU architectures enabled)
-    $(warning Up to Turing (sm_75) architectures only)
     GENCODE_EXTRA :=
 endif
 
 # Combined GENCODE flags
 GENCODE_FLAGS := $(GENCODE_BASE) $(GENCODE_EXTRA)
 
+# Verify CXXCUDA exists
+ifeq ($(wildcard $(CXXCUDA)),)
+    $(warning Host compiler $(CXXCUDA) not found, trying to find alternative...)
+    # Try to find alternative
+    ifneq ($(GPP_DEFAULT),)
+        CXXCUDA := $(GPP_DEFAULT)
+    else
+        $(error Cannot find host compiler for CUDA. Please install g++ or g++-11)
+    endif
+endif
+
 # Simplified GPU detection
 GPU_DETECT := $(shell nvidia-smi -L 2>/dev/null | head -n1 || echo "Unknown GPU")
 $(info GPU detected: $(GPU_DETECT))
-
-# Check GPU architecture and warn if unsupported
-ifneq ($(GPU_DETECT),Unknown GPU)
-    ifeq ($(shell echo "$(GPU_DETECT)" | grep -i "RTX 40\|Ada\|4090\|4080" | wc -l), 1)
-        ifneq ($(shell expr $(CUDA_VERSION_INT) \>= 1180), 1)
-            $(error Ada Lovelace GPU detected but CUDA $(CUDA_VERSION) is too old. Requires CUDA 11.8+)
-        endif
-    else ifeq ($(shell echo "$(GPU_DETECT)" | grep -i "RTX 30\|Ampere\|3060\|3070\|3080\|3090" | wc -l), 1)
-        ifneq ($(shell expr $(CUDA_VERSION_INT) \>= 1110), 1)
-            $(warning Ampere GPU detected but CUDA $(CUDA_VERSION) is too old. Requires CUDA 11.1+ for full support)
-        endif
-    endif
-endif
 
 ifdef debug
 CXXFLAGS   = -mssse3 -Wno-write-strings -g -I. -I$(CUDA)/include
@@ -104,6 +128,7 @@ LFLAGS     = -lpthread -L$(CUDA)/lib64 -lcudart
 # Unified GPU compilation rule with auto-detected GENCODE flags
 $(OBJDIR)/GPU/GPUEngine.o: GPU/GPUEngine.cu
 	@echo "Compiling GPU code with CUDA $(CUDA_VERSION)..."
+	@echo "Using host compiler: $(CXXCUDA)"
 	@echo "Using GPU architectures:"
 	@echo "  $(GENCODE_FLAGS)"
 	$(NVCC) -maxrregcount=0 --ptxas-options=-v --compile \
@@ -120,7 +145,7 @@ all: VanitySearch
 VanitySearch: $(OBJET)
 	@echo "Linking VanitySearch..."
 	$(CXX) $(OBJET) $(LFLAGS) -o vanitysearch
-	@echo "Build complete with CUDA $(CUDA_VERSION)"
+	@echo "Build complete with CUDA $(CUDA_VERSION) and compiler $(CXX)"
 
 $(OBJET): | $(OBJDIR) $(OBJDIR)/GPU $(OBJDIR)/hash
 
@@ -139,99 +164,34 @@ clean:
 	@rm -f obj/GPU/*.o
 	@rm -f obj/hash/*.o
 
-# Build with minimal GPU support (for CUDA 11.0)
-cuda11.0-compat:
-	@echo "Building with CUDA 11.0 compatibility..."
-	@make GENCODE_EXTRA="-gencode=arch=compute_80,code=sm_80"
-
-# Manual override for specific architectures
-build-with-arch:
-	@echo "Available architecture presets:"
-	@echo "  make pascal    # Pascal only (GTX 10 series)"
-	@echo "  make turing    # Turing only (RTX 20 series)"
-	@echo "  make volta     # Volta only (Tesla V100)"
-	@echo "  make max-compat # Maximum compatibility for your CUDA $(CUDA_VERSION)"
-
-# Architecture presets
-pascal:
-	@make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61"
-
-turing:
-	@make GENCODE_FLAGS="-gencode=arch=compute_75,code=sm_75"
-
-volta:
-	@make GENCODE_FLAGS="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_72,code=sm_72"
-
-max-compat:
-	@echo "Building with maximum compatibility for CUDA $(CUDA_VERSION)..."
-	@if [ $(CUDA_VERSION_INT) -ge 1180 ]; then \
-		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89"; \
-	elif [ $(CUDA_VERSION_INT) -ge 1110 ]; then \
-		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86"; \
-	elif [ $(CUDA_VERSION_INT) -ge 1100 ]; then \
-		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80"; \
-	else \
-		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75"; \
-	fi
-
-# Update CUDA suggestion
-update-cuda-suggestion:
-	@echo ""
-	@echo "=== CUDA Update Suggestion ==="
-	@echo "Current CUDA version: $(CUDA_VERSION)"
-	@if [ $(CUDA_VERSION_INT) -eq 1100 ]; then \
-		echo "You have CUDA 11.0 which supports:"; \
-		echo "  - Pascal (sm_60, sm_61)"; \
-		echo "  - Turing (sm_75)"; \
-		echo "  - Volta (sm_70, sm_72, sm_80)"; \
-		echo ""; \
-		echo "To support newer GPUs:"; \
-		echo "  - CUDA 11.1+ for Ampere (RTX 30 series)"; \
-		echo "  - CUDA 11.8+ for Ada Lovelace (RTX 40 series)"; \
-	fi
-
 # Utility targets
 info:
 	@echo "=== Build Information ==="
 	@echo "CUDA Version: $(CUDA_VERSION) (Version code: $(CUDA_VERSION_INT))"
 	@echo "GPU Info: $(GPU_DETECT)"
-	@echo "CXX Compiler: $(CXX)"
+	@echo "C++ Compiler: $(CXX) ($(shell $(CXX) --version | head -n1))"
+	@echo "CUDA Host Compiler: $(CXXCUDA)"
 	@echo "NVCC Compiler: $(NVCC)"
 	@echo "GENCODE Flags:"
 	@for flag in $(GENCODE_FLAGS); do \
 		echo "  $$flag"; \
 	done
-	@echo ""
-	@echo "Available architecture targets:"
-	@echo "  make pascal       - Pascal GPUs (GTX 10 series)"
-	@echo "  make turing       - Turing GPUs (RTX 20 series)"
-	@echo "  make volta        - Volta GPUs (Tesla V100)"
-	@echo "  make max-compat   - Maximum compatibility for CUDA $(CUDA_VERSION)"
-	@echo "  make cuda11.0-compat - Explicit CUDA 11.0 compatibility"
 
 # Help target
 help:
 	@echo "=== VanitySearch Makefile Help ==="
 	@echo "Available targets:"
-	@echo "  make all             - Build VanitySearch (default)"
-	@echo "  make debug           - Build with debug symbols"
-	@echo "  make clean           - Clean build files"
-	@echo "  make info            - Show build configuration"
-	@echo "  make help            - Show this help"
-	@echo "  make cuda11.0-compat - Build for CUDA 11.0 compatibility"
-	@echo "  make max-compat      - Build with max compatibility"
-	@echo ""
-	@echo "Architecture-specific targets:"
-	@echo "  make pascal          - Pascal GPUs only"
-	@echo "  make turing          - Turing GPUs only"
-	@echo "  make volta           - Volta GPUs only"
+	@echo "  make all           - Build VanitySearch (default)"
+	@echo "  make debug         - Build with debug symbols"
+	@echo "  make clean         - Clean build files"
+	@echo "  make info          - Show build configuration"
+	@echo "  make help          - Show this help"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  debug=1              - Enable debug build"
+	@echo "  debug=1            - Enable debug build"
 	@echo ""
 	@echo "Example:"
-	@echo "  make debug=1         # Build with debugging enabled"
-	@echo "  make clean all       # Clean and rebuild"
-	@echo "  make cuda11.0-compat # Explicit CUDA 11.0 build"
+	@echo "  make debug=1       # Build with debugging enabled"
+	@echo "  make clean all     # Clean and rebuild"
 
-.PHONY: all clean info help cuda11.0-compat build-with-arch pascal turing volta max-compat update-cuda-suggestion
+.PHONY: all clean info help
