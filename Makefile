@@ -32,41 +32,41 @@ CUDA_MINOR := $(shell echo $(CUDA_VERSION) | cut -d. -f2)
 # Debug info
 $(info Detected CUDA version: $(CUDA_VERSION))
 
-# Base GENCODE flags common to all CUDA versions
+# Base GENCODE flags common to most CUDA versions
 GENCODE_BASE := -gencode=arch=compute_60,code=sm_60 \
                 -gencode=arch=compute_61,code=sm_61 \
-                -gencode=arch=compute_75,code=sm_75 \
-                -gencode=arch=compute_80,code=sm_80
+                -gencode=arch=compute_75,code=sm_75
 
 # Conditional GENCODE flags based on CUDA version
-# compute_86 (Ampere) requires CUDA 11.1+
-# compute_89 (Ada Lovelace) requires CUDA 11.8+
-ifeq ($(shell expr $(CUDA_MAJOR) \>= 12), 1)
-    # CUDA 12.x - full support
-    $(info CUDA 12.x detected - full GPU architecture support)
-    GENCODE_EXTRA := -gencode=arch=compute_86,code=sm_86 \
+# CUDA 11.0: support up to compute_80 (Volta)
+# CUDA 11.1-11.7: support up to compute_86 (Ampere)
+# CUDA 11.8+: support up to compute_89 (Ada Lovelace)
+
+# Calculate CUDA version as integer (major * 100 + minor)
+CUDA_VERSION_INT := $(shell expr $(CUDA_MAJOR) \* 100 + $(CUDA_MINOR))
+
+ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1180), 1)
+    # CUDA 11.8+ - full support up to compute_89
+    $(info CUDA 11.8+ detected - full GPU architecture support)
+    GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80 \
+                     -gencode=arch=compute_86,code=sm_86 \
                      -gencode=arch=compute_89,code=sm_89 \
                      -gencode=arch=compute_89,code=compute_89
-else ifeq ($(shell expr $(CUDA_MAJOR) \>= 11), 1)
-    # CUDA 11.x
-    ifeq ($(shell expr $(CUDA_MINOR) \>= 1), 1)
-        # CUDA 11.1+ supports compute_86
-        $(info CUDA 11.1+ detected - including Ampere (sm_86) support)
-        GENCODE_EXTRA := -gencode=arch=compute_86,code=sm_86 \
-                         -gencode=arch=compute_89,code=sm_89 \
-                         -gencode=arch=compute_89,code=compute_89
-    else ifeq ($(shell expr $(CUDA_MINOR) \>= 0), 1)
-        # CUDA 11.0 does NOT support compute_86
-        $(warning CUDA 11.0 detected - sm_86 (Ampere/RTX 30 series) disabled)
-        $(warning Upgrade to CUDA 11.1+ for Ampere GPU support)
-        GENCODE_EXTRA := -gencode=arch=compute_89,code=sm_89 \
-                         -gencode=arch=compute_89,code=compute_89
-    endif
+else ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1110), 1)
+    # CUDA 11.1-11.7 - support up to compute_86
+    $(info CUDA 11.1-11.7 detected - including Ampere (sm_86) support)
+    GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80 \
+                     -gencode=arch=compute_86,code=sm_86
+else ifeq ($(shell expr $(CUDA_VERSION_INT) \>= 1100), 1)
+    # CUDA 11.0 - support up to compute_80 ONLY
+    $(warning CUDA 11.0 detected - limited to architectures up to Volta (sm_80))
+    $(warning compute_86 (Ampere) and compute_89 (Ada) are NOT supported)
+    GENCODE_EXTRA := -gencode=arch=compute_80,code=sm_80
 else
     # CUDA 10.x or older
     $(warning CUDA $(CUDA_VERSION) detected - only basic GPU architectures enabled)
-    GENCODE_EXTRA := -gencode=arch=compute_89,code=sm_89 \
-                     -gencode=arch=compute_89,code=compute_89
+    $(warning Up to Turing (sm_75) architectures only)
+    GENCODE_EXTRA :=
 endif
 
 # Combined GENCODE flags
@@ -76,10 +76,17 @@ GENCODE_FLAGS := $(GENCODE_BASE) $(GENCODE_EXTRA)
 GPU_DETECT := $(shell nvidia-smi -L 2>/dev/null | head -n1 || echo "Unknown GPU")
 $(info GPU detected: $(GPU_DETECT))
 
-# Check if we have an Ampere GPU (RTX 30 series)
-ifeq ($(shell echo "$(GPU_DETECT)" | grep -i "RTX 30\|RTX A\|A100\|A10\|A2\|Ampere" | wc -l), 1)
-    $(warning Ampere GPU detected but CUDA $(CUDA_VERSION) may not fully support it)
-    $(warning Consider upgrading to CUDA 11.1+ for optimal performance)
+# Check GPU architecture and warn if unsupported
+ifneq ($(GPU_DETECT),Unknown GPU)
+    ifeq ($(shell echo "$(GPU_DETECT)" | grep -i "RTX 40\|Ada\|4090\|4080" | wc -l), 1)
+        ifneq ($(shell expr $(CUDA_VERSION_INT) \>= 1180), 1)
+            $(error Ada Lovelace GPU detected but CUDA $(CUDA_VERSION) is too old. Requires CUDA 11.8+)
+        endif
+    else ifeq ($(shell echo "$(GPU_DETECT)" | grep -i "RTX 30\|Ampere\|3060\|3070\|3080\|3090" | wc -l), 1)
+        ifneq ($(shell expr $(CUDA_VERSION_INT) \>= 1110), 1)
+            $(warning Ampere GPU detected but CUDA $(CUDA_VERSION) is too old. Requires CUDA 11.1+ for full support)
+        endif
+    endif
 endif
 
 ifdef debug
@@ -132,28 +139,61 @@ clean:
 	@rm -f obj/GPU/*.o
 	@rm -f obj/hash/*.o
 
-# Quick fix for CUDA 11.0: disable compute_86
-force-no-sm86:
-	@echo "Forcing build without compute_86 (for CUDA 11.0)..."
-	@make GENCODE_EXTRA="-gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_89,code=compute_89"
+# Build with minimal GPU support (for CUDA 11.0)
+cuda11.0-compat:
+	@echo "Building with CUDA 11.0 compatibility..."
+	@make GENCODE_EXTRA="-gencode=arch=compute_80,code=sm_80"
+
+# Manual override for specific architectures
+build-with-arch:
+	@echo "Available architecture presets:"
+	@echo "  make pascal    # Pascal only (GTX 10 series)"
+	@echo "  make turing    # Turing only (RTX 20 series)"
+	@echo "  make volta     # Volta only (Tesla V100)"
+	@echo "  make max-compat # Maximum compatibility for your CUDA $(CUDA_VERSION)"
+
+# Architecture presets
+pascal:
+	@make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61"
+
+turing:
+	@make GENCODE_FLAGS="-gencode=arch=compute_75,code=sm_75"
+
+volta:
+	@make GENCODE_FLAGS="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_72,code=sm_72"
+
+max-compat:
+	@echo "Building with maximum compatibility for CUDA $(CUDA_VERSION)..."
+	@if [ $(CUDA_VERSION_INT) -ge 1180 ]; then \
+		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89"; \
+	elif [ $(CUDA_VERSION_INT) -ge 1110 ]; then \
+		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86"; \
+	elif [ $(CUDA_VERSION_INT) -ge 1100 ]; then \
+		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80"; \
+	else \
+		make GENCODE_FLAGS="-gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75"; \
+	fi
 
 # Update CUDA suggestion
 update-cuda-suggestion:
 	@echo ""
 	@echo "=== CUDA Update Suggestion ==="
 	@echo "Current CUDA version: $(CUDA_VERSION)"
-	@if [ $(CUDA_MAJOR) -eq 11 -a $(CUDA_MINOR) -eq 0 ]; then \
-		echo "You have CUDA 11.0 which doesn't support Ampere GPUs (RTX 30 series)."; \
-		echo "Recommended: Upgrade to CUDA 11.8 or 12.x"; \
+	@if [ $(CUDA_VERSION_INT) -eq 1100 ]; then \
+		echo "You have CUDA 11.0 which supports:"; \
+		echo "  - Pascal (sm_60, sm_61)"; \
+		echo "  - Turing (sm_75)"; \
+		echo "  - Volta (sm_70, sm_72, sm_80)"; \
 		echo ""; \
-		echo "Quick fix for now:"; \
-		echo "  make force-no-sm86"; \
+		echo "To support newer GPUs:"; \
+		echo "  - CUDA 11.1+ for Ampere (RTX 30 series)"; \
+		echo "  - CUDA 11.8+ for Ada Lovelace (RTX 40 series)"; \
 	fi
 
 # Utility targets
 info:
 	@echo "=== Build Information ==="
-	@echo "CUDA Version: $(CUDA_VERSION) (Major: $(CUDA_MAJOR), Minor: $(CUDA_MINOR))"
+	@echo "CUDA Version: $(CUDA_VERSION) (Version code: $(CUDA_VERSION_INT))"
 	@echo "GPU Info: $(GPU_DETECT)"
 	@echo "CXX Compiler: $(CXX)"
 	@echo "NVCC Compiler: $(NVCC)"
@@ -162,27 +202,36 @@ info:
 		echo "  $$flag"; \
 	done
 	@echo ""
-	@if [ $(CUDA_MAJOR) -eq 11 -a $(CUDA_MINOR) -eq 0 ]; then \
-		echo "NOTE: CUDA 11.0 detected - compute_86 is disabled"; \
-		echo "      Run 'make update-cuda-suggestion' for more info"; \
-	fi
+	@echo "Available architecture targets:"
+	@echo "  make pascal       - Pascal GPUs (GTX 10 series)"
+	@echo "  make turing       - Turing GPUs (RTX 20 series)"
+	@echo "  make volta        - Volta GPUs (Tesla V100)"
+	@echo "  make max-compat   - Maximum compatibility for CUDA $(CUDA_VERSION)"
+	@echo "  make cuda11.0-compat - Explicit CUDA 11.0 compatibility"
 
 # Help target
 help:
 	@echo "=== VanitySearch Makefile Help ==="
 	@echo "Available targets:"
-	@echo "  make all           - Build VanitySearch (default)"
-	@echo "  make debug         - Build with debug symbols"
-	@echo "  make clean         - Clean build files"
-	@echo "  make info          - Show build configuration"
-	@echo "  make help          - Show this help"
-	@echo "  make force-no-sm86 - Force build without compute_86"
+	@echo "  make all             - Build VanitySearch (default)"
+	@echo "  make debug           - Build with debug symbols"
+	@echo "  make clean           - Clean build files"
+	@echo "  make info            - Show build configuration"
+	@echo "  make help            - Show this help"
+	@echo "  make cuda11.0-compat - Build for CUDA 11.0 compatibility"
+	@echo "  make max-compat      - Build with max compatibility"
+	@echo ""
+	@echo "Architecture-specific targets:"
+	@echo "  make pascal          - Pascal GPUs only"
+	@echo "  make turing          - Turing GPUs only"
+	@echo "  make volta           - Volta GPUs only"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  debug=1            - Enable debug build"
+	@echo "  debug=1              - Enable debug build"
 	@echo ""
 	@echo "Example:"
-	@echo "  make debug=1       # Build with debugging enabled"
-	@echo "  make clean all     # Clean and rebuild"
+	@echo "  make debug=1         # Build with debugging enabled"
+	@echo "  make clean all       # Clean and rebuild"
+	@echo "  make cuda11.0-compat # Explicit CUDA 11.0 build"
 
-.PHONY: all clean info help force-no-sm86 update-cuda-suggestion
+.PHONY: all clean info help cuda11.0-compat build-with-arch pascal turing volta max-compat update-cuda-suggestion
