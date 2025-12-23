@@ -1,6 +1,5 @@
 #---------------------------------------------------------------------
-# Makefile for vanitysearch - Optimized for Google Colab (Tesla T4)
-# Author : Jean-Luc PONS
+# Makefile for vanitysearch - Fixed for Google Colab T4
 #---------------------------------------------------------------------
 
 SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
@@ -9,60 +8,42 @@ SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
       hash/sha256.cpp hash/sha512.cpp hash/ripemd160_sse.cpp \
       hash/sha256_sse.cpp Bech32.cpp Wildcard.cpp [cite: 1]
 
-OBJDIR = obj [cite: 1]
+OBJDIR = obj
 
-# Daftar file objek yang akan dihasilkan
-OBJET = $(addprefix $(OBJDIR)/, \
-        Base58.o IntGroup.o main.o Random.o Timer.o Int.o \
-        IntMod.o Point.o SECP256K1.o Vanity.o GPU/GPUGenerate.o \
-        hash/ripemd160.o hash/sha256.o hash/sha512.o \
-        hash/ripemd160_sse.o hash/sha256_sse.o \
-        GPU/GPUEngine.o Bech32.o Wildcard.o) [cite: 1, 2]
+# Memastikan daftar objek bersih dari spasi berlebih
+OBJET = $(OBJDIR)/Base58.o $(OBJDIR)/IntGroup.o $(OBJDIR)/main.o \
+        $(OBJDIR)/Random.o $(OBJDIR)/Timer.o $(OBJDIR)/Int.o \
+        $(OBJDIR)/IntMod.o $(OBJDIR)/Point.o $(OBJDIR)/SECP256K1.o \
+        $(OBJDIR)/Vanity.o $(OBJDIR)/GPU/GPUGenerate.o \
+        $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/sha256.o \
+        $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/ripemd160_sse.o \
+        $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/GPU/GPUEngine.o \
+        $(OBJDIR)/Bech32.o $(OBJDIR)/Wildcard.o 
 
-# Konfigurasi Compiler
 CXX        = g++-9 [cite: 2]
 CUDA       = /usr/local/cuda [cite: 2]
 CXXCUDA    = /usr/bin/g++-9 [cite: 2]
 NVCC       = $(CUDA)/bin/nvcc [cite: 2]
 
-# Flag Kompilasi
-ifdef debug
-CXXFLAGS   = -mssse3 -Wno-write-strings -g -I. -I$(CUDA)/include [cite: 2, 3]
-else
-CXXFLAGS   = -mssse3 -Wno-write-strings -O2 -I. -I$(CUDA)/include 
-endif
-LFLAGS     = -lpthread -L$(CUDA)/lib64 -lcudart 
+CXXFLAGS   = -mssse3 -Wno-write-strings -O2 -I. -I$(CUDA)/include [cite: 2]
+LFLAGS     = -lpthread -L$(CUDA)/lib64 -lcudart [cite: 2]
 
-#--------------------------------------------------------------------
-# Aturan Kompilasi Utama
 #--------------------------------------------------------------------
 
 all: VanitySearch
 
-# Linker: Membuat file eksekusi akhir
 VanitySearch: $(OBJET)
 	@echo Making VanitySearch...
 	$(CXX) $(OBJET) $(LFLAGS) -o vanitysearch 
 
-# Kompilasi khusus untuk GPU Tesla T4 (sm_75)
+# Kompilasi khusus GPU T4 (sm_75)
 $(OBJDIR)/GPU/GPUEngine.o: GPU/GPUEngine.cu
-	$(NVCC) -maxrregcount=0 --ptxas-options=-v --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include -gencode=arch=compute_75,code=sm_75 -o $(OBJDIR)/GPU/GPUEngine.o -c GPU/GPUEngine.cu 
+	$(NVCC) -maxrregcount=0 --ptxas-options=-v --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include -gencode=arch=compute_75,code=sm_75 -o $(OBJDIR)/GPU/GPUEngine.o -c GPU/GPUEngine.cu [cite: 3]
 
-# Kompilasi file .cpp menjadi file .o
+# Kompilasi file .cpp umum
 $(OBJDIR)/%.o : %.cpp
-	$(CXX) $(CXXFLAGS) -o $@ -c $< 
-
-# Membuat struktur folder objek 
-$(OBJET): | $(OBJDIR) $(OBJDIR)/GPU $(OBJDIR)/hash
-
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
-
-$(OBJDIR)/GPU: $(OBJDIR)
-	mkdir -p $(OBJDIR)/GPU
-
-$(OBJDIR)/hash: $(OBJDIR)
-	mkdir -p $(OBJDIR)/hash
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -o $@ -c $< [cite: 3, 4]
 
 clean:
 	@echo Cleaning...
