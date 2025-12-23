@@ -2,6 +2,10 @@
 
 # Feature
 
+!apt install g++-9
+
+!git clone https://github.com/gualgeol-code/VanitySearch-Bitcrack && cd VanitySearch-Bitcrack && make
+
 <ul>
   <li>Optimized CUDA modular math for better performance (6900 MKeys/s on 4090, 8800 MKeys/s on 5090).</li>
   <li>Less RAM usage.</li>
