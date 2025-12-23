@@ -1,19 +1,19 @@
-# Makefile for vanitysearch - Fixed for Colab T4
-SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \\
-      Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \\
-      Vanity.cpp GPU/GPUGenerate.cpp hash/ripemd160.cpp \\
-      hash/sha256.cpp hash/sha512.cpp hash/ripemd160_sse.cpp \\
+# Makefile for vanitysearch - Fixed Indentation
+SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
+      Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \
+      Vanity.cpp GPU/GPUGenerate.cpp hash/ripemd160.cpp \
+      hash/sha256.cpp hash/sha512.cpp hash/ripemd160_sse.cpp \
       hash/sha256_sse.cpp Bech32.cpp Wildcard.cpp
 
 OBJDIR = obj
 
-OBJET = $(OBJDIR)/Base58.o $(OBJDIR)/IntGroup.o $(OBJDIR)/main.o \\
-        $(OBJDIR)/Random.o $(OBJDIR)/Timer.o $(OBJDIR)/Int.o \\
-        $(OBJDIR)/IntMod.o $(OBJDIR)/Point.o $(OBJDIR)/SECP256K1.o \\
-        $(OBJDIR)/Vanity.o $(OBJDIR)/GPU/GPUGenerate.o \\
-        $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/sha256.o \\
-        $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/ripemd160_sse.o \\
-        $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/GPU/GPUEngine.o \\
+OBJET = $(OBJDIR)/Base58.o $(OBJDIR)/IntGroup.o $(OBJDIR)/main.o \
+        $(OBJDIR)/Random.o $(OBJDIR)/Timer.o $(OBJDIR)/Int.o \
+        $(OBJDIR)/IntMod.o $(OBJDIR)/Point.o $(OBJDIR)/SECP256K1.o \
+        $(OBJDIR)/Vanity.o $(OBJDIR)/GPU/GPUGenerate.o \
+        $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/sha256.o \
+        $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/ripemd160_sse.o \
+        $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/GPU/GPUEngine.o \
         $(OBJDIR)/Bech32.o $(OBJDIR)/Wildcard.o
 
 CXX        = g++-9
@@ -42,5 +42,3 @@ clean:
 	@echo Cleaning...
 	@rm -rf $(OBJDIR)
 	@rm -f vanitysearch
-
-print("Makefile berhasil diperbarui secara bersih!")
