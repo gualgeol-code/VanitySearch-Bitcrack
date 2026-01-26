@@ -1,8 +1,4 @@
-#---------------------------------------------------------------------
-# Makefile for vanitysearch
-#
-# Author : Jean-Luc PONS
-
+# Makefile for vanitysearch - Fixed Indentation
 SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
       Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \
       Vanity.cpp GPU/GPUGenerate.cpp hash/ripemd160.cpp \
@@ -11,37 +7,22 @@ SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
 
 OBJDIR = obj
 
-OBJET = $(addprefix $(OBJDIR)/, \
-        Base58.o IntGroup.o main.o Random.o Timer.o Int.o \
-        IntMod.o Point.o SECP256K1.o Vanity.o GPU/GPUGenerate.o \
-        hash/ripemd160.o hash/sha256.o hash/sha512.o \
-        hash/ripemd160_sse.o hash/sha256_sse.o \
-        GPU/GPUEngine.o Bech32.o Wildcard.o)
+OBJET = $(OBJDIR)/Base58.o $(OBJDIR)/IntGroup.o $(OBJDIR)/main.o \
+        $(OBJDIR)/Random.o $(OBJDIR)/Timer.o $(OBJDIR)/Int.o \
+        $(OBJDIR)/IntMod.o $(OBJDIR)/Point.o $(OBJDIR)/SECP256K1.o \
+        $(OBJDIR)/Vanity.o $(OBJDIR)/GPU/GPUGenerate.o \
+        $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/sha256.o \
+        $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/ripemd160_sse.o \
+        $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/GPU/GPUEngine.o \
+        $(OBJDIR)/Bech32.o $(OBJDIR)/Wildcard.o
 
 CXX        = g++-9
 CUDA       = /usr/local/cuda
 CXXCUDA    = /usr/bin/g++-9
 NVCC       = $(CUDA)/bin/nvcc
 
-ifdef debug
-CXXFLAGS   = -mssse3 -Wno-write-strings -g -I. -I$(CUDA)/include
-else
 CXXFLAGS   = -mssse3 -Wno-write-strings -O2 -I. -I$(CUDA)/include
-endif
 LFLAGS     = -lpthread -L$(CUDA)/lib64 -lcudart
-
-#--------------------------------------------------------------------
-
-ifdef debug
-$(OBJDIR)/GPU/GPUEngine.o: GPU/GPUEngine.cu
-	$(NVCC) -G -maxrregcount=0 --ptxas-options=-v --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -g -I$(CUDA)/include -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_89,code=compute_89 -o $(OBJDIR)/GPU/GPUEngine.o -c GPU/GPUEngine.cu
-else
-$(OBJDIR)/GPU/GPUEngine.o: GPU/GPUEngine.cu
-	$(NVCC) -maxrregcount=0 --ptxas-options=-v --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_89,code=compute_89 -o $(OBJDIR)/GPU/GPUEngine.o -c GPU/GPUEngine.cu
-endif
-
-$(OBJDIR)/%.o : %.cpp
-	$(CXX) $(CXXFLAGS) -o $@ -c $<
 
 all: VanitySearch
 
@@ -49,20 +30,15 @@ VanitySearch: $(OBJET)
 	@echo Making VanitySearch...
 	$(CXX) $(OBJET) $(LFLAGS) -o vanitysearch
 
-$(OBJET): | $(OBJDIR) $(OBJDIR)/GPU $(OBJDIR)/hash
+$(OBJDIR)/GPU/GPUEngine.o: GPU/GPUEngine.cu
+	@mkdir -p $(OBJDIR)/GPU
+	$(NVCC) -maxrregcount=0 --ptxas-options=-v --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include -gencode=arch=compute_75,code=sm_75 -o $(OBJDIR)/GPU/GPUEngine.o -c GPU/GPUEngine.cu
 
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
-
-$(OBJDIR)/GPU: $(OBJDIR)
-	cd $(OBJDIR) &&	mkdir -p GPU
-
-$(OBJDIR)/hash: $(OBJDIR)
-	cd $(OBJDIR) &&	mkdir -p hash
+$(OBJDIR)/%.o : %.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -o $@ -c $<
 
 clean:
 	@echo Cleaning...
-	@rm -f obj/*.o
-	@rm -f obj/GPU/*.o
-	@rm -f obj/hash/*.o
-
+	@rm -rf $(OBJDIR)
+	@rm -f vanitysearch
